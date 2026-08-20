@@ -1,7 +1,12 @@
 package com.example.shop_app_backend.controllers;
 
 import com.example.shop_app_backend.dtos.ProductDTO;
+import com.example.shop_app_backend.dtos.ProductImageDTO;
+import com.example.shop_app_backend.models.Product;
+import com.example.shop_app_backend.models.ProductImage;
+import com.example.shop_app_backend.services.IProductService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -20,14 +25,15 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("api/v1/products")
+@RequestMapping("${api.prefix}/products")
+@RequiredArgsConstructor
 public class ProductController {
+    private final IProductService productService;
 
-    @PostMapping(value = "",
-            consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = "")
     //POST http://localhost:8088/v1/api/products
     public ResponseEntity<?> createProduct(
-            @Valid @ModelAttribute ProductDTO productDTO,
+            @Valid @RequestBody ProductDTO productDTO,
             BindingResult result
     ) {
         try {
@@ -38,14 +44,29 @@ public class ProductController {
                         .toList();
                 return ResponseEntity.badRequest().body(errorMessages);
             }
-            List<MultipartFile> files = productDTO.getFiles();
+            Product newProduct = productService.createProduct(productDTO);
+            return ResponseEntity.ok(newProduct);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping(value = "uploads/{id}",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    //POST http://localhost:8088/v1/api/products/uploads/{id}
+    public ResponseEntity<?> uploadImages(
+            @PathVariable("id") Long productId,
+            @ModelAttribute("files") List<MultipartFile> files
+    ){
+        try {
+            Product existingProduct = productService.getProductById(productId);
+            List<ProductImage> productImages = new ArrayList<>();
             files = files == null ? new ArrayList<>() : files;
             for (MultipartFile file : files) {
                 if(file.getSize() == 0) {
                     continue;
                 }
-                // Kiểm tra kích thước file và định dạng
-                if(file.getSize() > 10 * 1024 * 1024) { // Kích thước > 10MB
+                if(file.getSize() > 10 * 1024 * 1024) {
                     return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
                             .body("File is too large! Maximum size is 10MB");
                 }
@@ -54,13 +75,17 @@ public class ProductController {
                     return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                             .body("File must be an image");
                 }
-                // Lưu file và cập nhật thumbnail trong DTO
-                String filename = storeFile(file); // Thay thế hàm này với code của bạn để lưu file
+                String filename = storeFile(file);
 
-                // lưu vào đối tượng product trong DB => sẽ làm sau
-                // lưu vào bảng product_images
+                ProductImage productImage = productService.createProductImage(
+                        existingProduct.getId(),
+                        ProductImageDTO.builder()
+                                .imageUrl(filename)
+                                .build()
+                );
+                productImages.add(productImage);
             }
-            return ResponseEntity.ok("Product created successfully");
+            return ResponseEntity.ok().body(productImages);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
@@ -68,17 +93,12 @@ public class ProductController {
 
     private String storeFile(MultipartFile file) throws IOException {
         String filename = StringUtils.cleanPath(file.getOriginalFilename());
-        // Thêm UUID vào trước tên file để đảm bảo tên file là duy nhất
         String uniqueFilename = UUID.randomUUID().toString() + "_" + filename;
-        // Đường dẫn đến thư mục mà bạn muốn lưu file
         java.nio.file.Path uploadDir = Paths.get("uploads");
-        // Kiểm tra và tạo thư mục nếu nó không tồn tại
         if (!Files.exists(uploadDir)) {
             Files.createDirectories(uploadDir);
         }
-        // Đường dẫn đầy đủ đến file
         java.nio.file.Path destination = Paths.get(uploadDir.toString(), uniqueFilename);
-        // Sao chép file vào thư mục đích
         Files.copy(file.getInputStream(), destination, StandardCopyOption.REPLACE_EXISTING);
         return uniqueFilename;
     }
